@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_OrderFulfillment" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.50.1" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.5.0">
+  <bpmn:error id="Error_PaymentDeclined" name="Payment Declined" errorCode="ERR_PAYMENT_DECLINED" />
+  <bpmn:error id="Error_InvalidOrder" name="Invalid Order" errorCode="ERR_INVALID_ORDER" />
+  <bpmn:process id="order-fulfillment-process" name="Order Fulfillment Process" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_OrderPlaced" name="Order Placed">
+      <bpmn:outgoing>Flow_StartToValidate</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Activity_ValidateOrder" name="Validate Order">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="validate-order" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_StartToValidate</bpmn:incoming>
+      <bpmn:outgoing>Flow_ValidateToReviewGateway</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="Gateway_ReviewNeeded" name="Review Needed?" default="Flow_AutoToPayment">
+      <bpmn:incoming>Flow_ValidateToReviewGateway</bpmn:incoming>
+      <bpmn:outgoing>Flow_AutoToPayment</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToManualReview</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:userTask id="Activity_ManualOrderReview" name="Manual Order Review">
+      <bpmn:extensionElements>
+        <zeebe:assignmentDefinition assignee="demo" candidateGroups="order-reviewers" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToManualReview</bpmn:incoming>
+      <bpmn:outgoing>Flow_ReviewToDecisionGateway</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="Gateway_IsApproved" name="Approved?" default="Flow_RejectedToEnd">
+      <bpmn:incoming>Flow_ReviewToDecisionGateway</bpmn:incoming>
+      <bpmn:outgoing>Flow_ReviewApprovedToPayment</bpmn:outgoing>
+      <bpmn:outgoing>Flow_RejectedToEnd</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="EndEvent_OrderRejected" name="Order Rejected">
+      <bpmn:incoming>Flow_RejectedToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="Activity_ProcessPayment" name="Process Payment">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="process-payment" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_AutoToPayment</bpmn:incoming>
+      <bpmn:incoming>Flow_ReviewApprovedToPayment</bpmn:incoming>
+      <bpmn:outgoing>Flow_PaymentToShip</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="Event_PaymentDeclined" name="Payment Declined" attachedToRef="Activity_ProcessPayment">
+      <bpmn:outgoing>Flow_PaymentErrorToNotify</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorEventDefinition_PaymentDeclined" errorRef="Error_PaymentDeclined" />
+    </bpmn:boundaryEvent>
+    <bpmn:serviceTask id="Activity_ShipOrder" name="Ship Order">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="ship-order" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_PaymentToShip</bpmn:incoming>
+      <bpmn:outgoing>Flow_ShipToEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="EndEvent_OrderCompleted" name="Order Completed">
+      <bpmn:incoming>Flow_ShipToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="Activity_NotifyFailure" name="Notify Customer Failure">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="notify-customer-failure" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_PaymentErrorToNotify</bpmn:incoming>
+      <bpmn:outgoing>Flow_NotifyToCancelEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="EndEvent_OrderCancelled" name="Order Cancelled">
+      <bpmn:incoming>Flow_NotifyToCancelEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_StartToValidate" sourceRef="StartEvent_OrderPlaced" targetRef="Activity_ValidateOrder" />
+    <bpmn:sequenceFlow id="Flow_ValidateToReviewGateway" sourceRef="Activity_ValidateOrder" targetRef="Gateway_ReviewNeeded" />
+    <bpmn:sequenceFlow id="Flow_AutoToPayment" name="No Review (&#60; $1000)" sourceRef="Gateway_ReviewNeeded" targetRef="Activity_ProcessPayment" />
+    <bpmn:sequenceFlow id="Flow_ToManualReview" name="High Value (&#62;= $1000)" sourceRef="Gateway_ReviewNeeded" targetRef="Activity_ManualOrderReview">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= requiresManualReview = true or totalAmount &gt;= 1000</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ReviewToDecisionGateway" sourceRef="Activity_ManualOrderReview" targetRef="Gateway_IsApproved" />
+    <bpmn:sequenceFlow id="Flow_ReviewApprovedToPayment" name="Approved" sourceRef="Gateway_IsApproved" targetRef="Activity_ProcessPayment">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= orderApproved = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_RejectedToEnd" name="Rejected" sourceRef="Gateway_IsApproved" targetRef="EndEvent_OrderRejected" />
+    <bpmn:sequenceFlow id="Flow_PaymentToShip" sourceRef="Activity_ProcessPayment" targetRef="Activity_ShipOrder" />
+    <bpmn:sequenceFlow id="Flow_ShipToEnd" sourceRef="Activity_ShipOrder" targetRef="EndEvent_OrderCompleted" />
+    <bpmn:sequenceFlow id="Flow_PaymentErrorToNotify" sourceRef="Event_PaymentDeclined" targetRef="Activity_NotifyFailure" />
+    <bpmn:sequenceFlow id="Flow_NotifyToCancelEnd" sourceRef="Activity_NotifyFailure" targetRef="EndEvent_OrderCancelled" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="order-fulfillment-process">
+      <bpmndi:BPMNShape id="Shape_StartEvent_OrderPlaced" bpmnElement="StartEvent_OrderPlaced">
+        <dc:Bounds x="162" y="142" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="147" y="185" width="67" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Activity_ValidateOrder" bpmnElement="Activity_ValidateOrder">
+        <dc:Bounds x="250" y="120" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Gateway_ReviewNeeded" bpmnElement="Gateway_ReviewNeeded" isMarkerVisible="true">
+        <dc:Bounds x="405" y="135" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="391" y="105" width="81" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Activity_ProcessPayment" bpmnElement="Activity_ProcessPayment">
+        <dc:Bounds x="560" y="120" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Activity_ShipOrder" bpmnElement="Activity_ShipOrder">
+        <dc:Bounds x="720" y="120" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_EndEvent_OrderCompleted" bpmnElement="EndEvent_OrderCompleted">
+        <dc:Bounds x="882" y="142" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="858" y="185" width="85" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Activity_NotifyFailure" bpmnElement="Activity_NotifyFailure">
+        <dc:Bounds x="720" y="380" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_EndEvent_OrderCancelled" bpmnElement="EndEvent_OrderCancelled">
+        <dc:Bounds x="882" y="402" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="860" y="445" width="81" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Gateway_IsApproved" bpmnElement="Gateway_IsApproved" isMarkerVisible="true">
+        <dc:Bounds x="535" y="275" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="595" y="293" width="54" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_EndEvent_OrderRejected" bpmnElement="EndEvent_OrderRejected">
+        <dc:Bounds x="542" y="432" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="524" y="475" width="75" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Activity_ManualOrderReview" bpmnElement="Activity_ManualOrderReview">
+        <dc:Bounds x="380" y="260" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Event_PaymentDeclined" bpmnElement="Event_PaymentDeclined">
+        <dc:Bounds x="612" y="182" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="586" y="225" width="89" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_Flow_StartToValidate" bpmnElement="Flow_StartToValidate">
+        <di:waypoint x="198" y="160" />
+        <di:waypoint x="250" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_ValidateToReviewGateway" bpmnElement="Flow_ValidateToReviewGateway">
+        <di:waypoint x="350" y="160" />
+        <di:waypoint x="405" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_AutoToPayment" bpmnElement="Flow_AutoToPayment">
+        <di:waypoint x="455" y="160" />
+        <di:waypoint x="560" y="160" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="466" y="138" width="84" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_ToManualReview" bpmnElement="Flow_ToManualReview">
+        <di:waypoint x="430" y="185" />
+        <di:waypoint x="430" y="260" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="424" y="209" width="73" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_ReviewToDecisionGateway" bpmnElement="Flow_ReviewToDecisionGateway">
+        <di:waypoint x="480" y="300" />
+        <di:waypoint x="535" y="300" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_ReviewApprovedToPayment" bpmnElement="Flow_ReviewApprovedToPayment">
+        <di:waypoint x="560" y="275" />
+        <di:waypoint x="560" y="238" />
+        <di:waypoint x="590" y="238" />
+        <di:waypoint x="590" y="200" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="554" y="251" width="48" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_RejectedToEnd" bpmnElement="Flow_RejectedToEnd">
+        <di:waypoint x="560" y="325" />
+        <di:waypoint x="560" y="432" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="549" y="371" width="44" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_PaymentToShip" bpmnElement="Flow_PaymentToShip">
+        <di:waypoint x="660" y="160" />
+        <di:waypoint x="720" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_ShipToEnd" bpmnElement="Flow_ShipToEnd">
+        <di:waypoint x="820" y="160" />
+        <di:waypoint x="882" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_PaymentErrorToNotify" bpmnElement="Flow_PaymentErrorToNotify">
+        <di:waypoint x="630" y="218" />
+        <di:waypoint x="630" y="420" />
+        <di:waypoint x="720" y="420" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_NotifyToCancelEnd" bpmnElement="Flow_NotifyToCancelEnd">
+        <di:waypoint x="820" y="420" />
+        <di:waypoint x="882" y="420" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

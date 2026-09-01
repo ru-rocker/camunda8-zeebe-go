@@ -1,0 +1,409 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" 
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" 
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" 
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI" 
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" 
+                  xmlns:modeler="http://camunda.org/schema/modeler/1.0" 
+                  id="Definitions_OrderRiskFulfillment" 
+                  targetNamespace="http://bpmn.io/schema/bpmn" 
+                  exporter="Camunda Modeler" 
+                  exporterVersion="5.20.0" 
+                  modeler:executionPlatform="Camunda Cloud" 
+                  modeler:executionPlatformVersion="8.5.0">
+  
+  <bpmn:error id="Error_OutOfStock" name="Out of Stock" errorCode="ERR_OUT_OF_STOCK" />
+  <bpmn:error id="Error_PaymentDeclined" name="Payment Declined" errorCode="ERR_PAYMENT_DECLINED" />
+
+  <bpmn:process id="order-risk-fulfillment-process" name="Order Risk and Fulfillment Process" isExecutable="true">
+    
+    <!-- Start Event -->
+    <bpmn:startEvent id="StartEvent_RiskOrderPlaced" name="Order Submitted">
+      <bpmn:outgoing>Flow_StartToDMN</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <!-- 1. DMN Business Rule Task -->
+    <bpmn:businessRuleTask id="Activity_EvaluateRiskDMN" name="Evaluate Risk &amp; Discount (DMN)">
+      <bpmn:extensionElements>
+        <zeebe:calledDecision decisionId="Decision_CalculateRiskAndDiscount" resultVariable="decisionResult" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_StartToDMN</bpmn:incoming>
+      <bpmn:outgoing>Flow_DMNToRiskGateway</bpmn:outgoing>
+    </bpmn:businessRuleTask>
+
+    <!-- Gateway: Risk Evaluation Routing -->
+    <bpmn:exclusiveGateway id="Gateway_RiskRoute" name="Risk Level?" default="Flow_RiskToParallelFork">
+      <bpmn:incoming>Flow_DMNToRiskGateway</bpmn:incoming>
+      <bpmn:outgoing>Flow_RiskToParallelFork</bpmn:outgoing>
+      <bpmn:outgoing>Flow_RiskToManagerReview</bpmn:outgoing>
+      <bpmn:outgoing>Flow_RiskToFraudReject</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <!-- Branch A: Critical Fraud Reject -->
+    <bpmn:serviceTask id="Activity_NotifyFraudReject" name="Notify Fraud Rejection">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="notify-customer-failure" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_RiskToFraudReject</bpmn:incoming>
+      <bpmn:outgoing>Flow_FraudToRejectEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:endEvent id="EndEvent_FraudRejected" name="Order Rejected (Fraud)">
+      <bpmn:incoming>Flow_FraudToRejectEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- Branch B: High Risk Human Review (User Task) -->
+    <bpmn:userTask id="Activity_ManagerRiskReview" name="Manager Risk Review">
+      <bpmn:extensionElements>
+        <zeebe:assignmentDefinition candidateGroups="risk-managers" assignee="manager_demo" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_RiskToManagerReview</bpmn:incoming>
+      <bpmn:outgoing>Flow_ManagerToDecisionGateway</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:exclusiveGateway id="Gateway_ManagerDecision" name="Manager Approved?" default="Flow_ManagerRejectedToEnd">
+      <bpmn:incoming>Flow_ManagerToDecisionGateway</bpmn:incoming>
+      <bpmn:outgoing>Flow_ManagerApprovedToFork</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ManagerRejectedToEnd</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:endEvent id="EndEvent_ManagerRejected" name="Order Rejected by Manager">
+      <bpmn:incoming>Flow_ManagerRejectedToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- Parallel Fork: Concurrently Apply Discount & Reserve Inventory -->
+    <bpmn:parallelGateway id="Gateway_ParallelFork" name="Parallel Processing">
+      <bpmn:incoming>Flow_RiskToParallelFork</bpmn:incoming>
+      <bpmn:incoming>Flow_ManagerApprovedToFork</bpmn:incoming>
+      <bpmn:outgoing>Flow_ForkToDiscount</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ForkToInventory</bpmn:outgoing>
+    </bpmn:parallelGateway>
+
+    <!-- Parallel Branch 1: Apply Discount -->
+    <bpmn:serviceTask id="Activity_ApplyDiscount" name="Apply Discount &amp; Taxes">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="apply-discount" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ForkToDiscount</bpmn:incoming>
+      <bpmn:outgoing>Flow_DiscountToJoin</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- Parallel Branch 2: Reserve Inventory -->
+    <bpmn:serviceTask id="Activity_ReserveInventory" name="Reserve Inventory">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="reserve-inventory" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ForkToInventory</bpmn:incoming>
+      <bpmn:outgoing>Flow_InventoryToJoin</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- Boundary Error Event for Out of Stock -->
+    <bpmn:boundaryEvent id="Event_OutOfStock" name="Out of Stock" attachedToRef="Activity_ReserveInventory">
+      <bpmn:outgoing>Flow_StockErrorToNotify</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorEventDefinition_OutOfStock" errorRef="Error_OutOfStock" />
+    </bpmn:boundaryEvent>
+
+    <bpmn:serviceTask id="Activity_NotifyOutOfStock" name="Notify Out of Stock">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="notify-customer-failure" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_StockErrorToNotify</bpmn:incoming>
+      <bpmn:outgoing>Flow_StockToCancelEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:endEvent id="EndEvent_CancelledStock" name="Order Cancelled (No Stock)">
+      <bpmn:incoming>Flow_StockToCancelEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- Parallel Join -->
+    <bpmn:parallelGateway id="Gateway_ParallelJoin" name="Synchronize Steps">
+      <bpmn:incoming>Flow_DiscountToJoin</bpmn:incoming>
+      <bpmn:incoming>Flow_InventoryToJoin</bpmn:incoming>
+      <bpmn:outgoing>Flow_JoinToPayment</bpmn:outgoing>
+    </bpmn:parallelGateway>
+
+    <!-- Payment Processing -->
+    <bpmn:serviceTask id="Activity_ProcessPayment" name="Process Payment">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="process-payment" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_JoinToPayment</bpmn:incoming>
+      <bpmn:outgoing>Flow_PaymentToShip</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:boundaryEvent id="Event_PaymentDeclined" name="Payment Declined" attachedToRef="Activity_ProcessPayment">
+      <bpmn:outgoing>Flow_PaymentErrorToNotify</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorEventDefinition_PaymentDeclined" errorRef="Error_PaymentDeclined" />
+    </bpmn:boundaryEvent>
+
+    <bpmn:serviceTask id="Activity_NotifyPaymentFailure" name="Notify Payment Failure">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="notify-customer-failure" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_PaymentErrorToNotify</bpmn:incoming>
+      <bpmn:outgoing>Flow_PaymentErrorToEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:endEvent id="EndEvent_CancelledPayment" name="Order Cancelled (Payment Failed)">
+      <bpmn:incoming>Flow_PaymentErrorToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- Shipping -->
+    <bpmn:serviceTask id="Activity_ShipOrder" name="Ship Order">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="ship-order" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_PaymentToShip</bpmn:incoming>
+      <bpmn:outgoing>Flow_ShipToEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:endEvent id="EndEvent_OrderCompleted" name="Order Completed">
+      <bpmn:incoming>Flow_ShipToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- Sequence Flows -->
+    <bpmn:sequenceFlow id="Flow_StartToDMN" sourceRef="StartEvent_RiskOrderPlaced" targetRef="Activity_EvaluateRiskDMN" />
+    <bpmn:sequenceFlow id="Flow_DMNToRiskGateway" sourceRef="Activity_EvaluateRiskDMN" targetRef="Gateway_RiskRoute" />
+
+    <bpmn:sequenceFlow id="Flow_RiskToParallelFork" name="Low / Medium Risk" sourceRef="Gateway_RiskRoute" targetRef="Gateway_ParallelFork" />
+
+    <bpmn:sequenceFlow id="Flow_RiskToManagerReview" name="High Risk (Review)" sourceRef="Gateway_RiskRoute" targetRef="Activity_ManagerRiskReview">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= decisionResult.riskLevel = "HIGH" or decisionResult.requiresManagerApproval = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <bpmn:sequenceFlow id="Flow_RiskToFraudReject" name="Critical Fraud (&gt;= 80)" sourceRef="Gateway_RiskRoute" targetRef="Activity_NotifyFraudReject">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= decisionResult.riskLevel = "CRITICAL"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <bpmn:sequenceFlow id="Flow_FraudToRejectEnd" sourceRef="Activity_NotifyFraudReject" targetRef="EndEvent_FraudRejected" />
+
+    <bpmn:sequenceFlow id="Flow_ManagerToDecisionGateway" sourceRef="Activity_ManagerRiskReview" targetRef="Gateway_ManagerDecision" />
+
+    <bpmn:sequenceFlow id="Flow_ManagerApprovedToFork" name="Approved" sourceRef="Gateway_ManagerDecision" targetRef="Gateway_ParallelFork">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= managerApproved = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <bpmn:sequenceFlow id="Flow_ManagerRejectedToEnd" name="Rejected" sourceRef="Gateway_ManagerDecision" targetRef="EndEvent_ManagerRejected" />
+
+    <bpmn:sequenceFlow id="Flow_ForkToDiscount" sourceRef="Gateway_ParallelFork" targetRef="Activity_ApplyDiscount" />
+    <bpmn:sequenceFlow id="Flow_ForkToInventory" sourceRef="Gateway_ParallelFork" targetRef="Activity_ReserveInventory" />
+
+    <bpmn:sequenceFlow id="Flow_DiscountToJoin" sourceRef="Activity_ApplyDiscount" targetRef="Gateway_ParallelJoin" />
+    <bpmn:sequenceFlow id="Flow_InventoryToJoin" sourceRef="Activity_ReserveInventory" targetRef="Gateway_ParallelJoin" />
+
+    <bpmn:sequenceFlow id="Flow_StockErrorToNotify" sourceRef="Event_OutOfStock" targetRef="Activity_NotifyOutOfStock" />
+    <bpmn:sequenceFlow id="Flow_StockToCancelEnd" sourceRef="Activity_NotifyOutOfStock" targetRef="EndEvent_CancelledStock" />
+
+    <bpmn:sequenceFlow id="Flow_JoinToPayment" sourceRef="Gateway_ParallelJoin" targetRef="Activity_ProcessPayment" />
+    <bpmn:sequenceFlow id="Flow_PaymentToShip" sourceRef="Activity_ProcessPayment" targetRef="Activity_ShipOrder" />
+    <bpmn:sequenceFlow id="Flow_PaymentErrorToNotify" sourceRef="Event_PaymentDeclined" targetRef="Activity_NotifyPaymentFailure" />
+    <bpmn:sequenceFlow id="Flow_PaymentErrorToEnd" sourceRef="Activity_NotifyPaymentFailure" targetRef="EndEvent_CancelledPayment" />
+    <bpmn:sequenceFlow id="Flow_ShipToEnd" sourceRef="Activity_ShipOrder" targetRef="EndEvent_OrderCompleted" />
+
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="order-risk-fulfillment-process">
+      
+      <!-- Start Event -->
+      <bpmndi:BPMNShape id="Shape_StartEvent_RiskOrderPlaced" bpmnElement="StartEvent_RiskOrderPlaced">
+        <dc:Bounds x="152" y="162" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="131" y="205" width="81" height="14" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <!-- DMN Business Rule Task -->
+      <bpmndi:BPMNShape id="Shape_Activity_EvaluateRiskDMN" bpmnElement="Activity_EvaluateRiskDMN">
+        <dc:Bounds x="240" y="140" width="120" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+
+      <!-- Risk Routing Gateway -->
+      <bpmndi:BPMNShape id="Shape_Gateway_RiskRoute" bpmnElement="Gateway_RiskRoute" isMarkerVisible="true">
+        <dc:Bounds x="415" y="155" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="412" y="125" width="58" height="14" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <!-- Fraud Rejection Branch -->
+      <bpmndi:BPMNShape id="Shape_Activity_NotifyFraudReject" bpmnElement="Activity_NotifyFraudReject">
+        <dc:Bounds x="520" y="20" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_EndEvent_FraudRejected" bpmnElement="EndEvent_FraudRejected">
+        <dc:Bounds x="672" y="42" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="652" y="85" width="77" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <!-- Manager Review User Task -->
+      <bpmndi:BPMNShape id="Shape_Activity_ManagerRiskReview" bpmnElement="Activity_ManagerRiskReview">
+        <dc:Bounds x="520" y="260" width="110" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_Gateway_ManagerDecision" bpmnElement="Gateway_ManagerDecision" isMarkerVisible="true">
+        <dc:Bounds x="675" y="275" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="673" y="245" width="54" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_EndEvent_ManagerRejected" bpmnElement="EndEvent_ManagerRejected">
+        <dc:Bounds x="782" y="282" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="763" y="325" width="75" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <!-- Parallel Fork -->
+      <bpmndi:BPMNShape id="Shape_Gateway_ParallelFork" bpmnElement="Gateway_ParallelFork">
+        <dc:Bounds x="555" y="155" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="553" y="131" width="54" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <!-- Apply Discount -->
+      <bpmndi:BPMNShape id="Shape_Activity_ApplyDiscount" bpmnElement="Activity_ApplyDiscount">
+        <dc:Bounds x="660" y="100" width="110" height="70" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+
+      <!-- Reserve Inventory -->
+      <bpmndi:BPMNShape id="Shape_Activity_ReserveInventory" bpmnElement="Activity_ReserveInventory">
+        <dc:Bounds x="660" y="190" width="110" height="70" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_Event_OutOfStock" bpmnElement="Event_OutOfStock">
+        <dc:Bounds x="702" y="242" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="688" y="285" width="65" height="14" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_Activity_NotifyOutOfStock" bpmnElement="Activity_NotifyOutOfStock">
+        <dc:Bounds x="780" y="360" width="100" height="70" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_EndEvent_CancelledStock" bpmnElement="EndEvent_CancelledStock">
+        <dc:Bounds x="932" y="377" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="911" y="420" width="81" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <!-- Parallel Join -->
+      <bpmndi:BPMNShape id="Shape_Gateway_ParallelJoin" bpmnElement="Gateway_ParallelJoin">
+        <dc:Bounds x="825" y="155" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="817" y="131" width="67" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <!-- Process Payment -->
+      <bpmndi:BPMNShape id="Shape_Activity_ProcessPayment" bpmnElement="Activity_ProcessPayment">
+        <dc:Bounds x="920" y="140" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_Event_PaymentDeclined" bpmnElement="Event_PaymentDeclined">
+        <dc:Bounds x="962" y="202" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="936" y="245" width="89" height="14" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_Activity_NotifyPaymentFailure" bpmnElement="Activity_NotifyPaymentFailure">
+        <dc:Bounds x="1040" y="260" width="100" height="70" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_EndEvent_CancelledPayment" bpmnElement="EndEvent_CancelledPayment">
+        <dc:Bounds x="1192" y="277" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1170" y="320" width="81" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <!-- Ship Order -->
+      <bpmndi:BPMNShape id="Shape_Activity_ShipOrder" bpmnElement="Activity_ShipOrder">
+        <dc:Bounds x="1070" y="140" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+
+      <!-- End Event Completed -->
+      <bpmndi:BPMNShape id="Shape_EndEvent_OrderCompleted" bpmnElement="EndEvent_OrderCompleted">
+        <dc:Bounds x="1222" y="162" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1198" y="205" width="85" height="14" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <!-- Edges -->
+      <bpmndi:BPMNEdge id="Edge_Flow_StartToDMN" bpmnElement="Flow_StartToDMN">
+        <di:waypoint x="188" y="180" /><di:waypoint x="240" y="180" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_DMNToRiskGateway" bpmnElement="Flow_DMNToRiskGateway">
+        <di:waypoint x="360" y="180" /><di:waypoint x="415" y="180" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_RiskToParallelFork" bpmnElement="Flow_RiskToParallelFork">
+        <di:waypoint x="465" y="180" /><di:waypoint x="555" y="180" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_RiskToFraudReject" bpmnElement="Flow_RiskToFraudReject">
+        <di:waypoint x="440" y="155" /><di:waypoint x="440" y="60" /><di:waypoint x="520" y="60" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_FraudToRejectEnd" bpmnElement="Flow_FraudToRejectEnd">
+        <di:waypoint x="620" y="60" /><di:waypoint x="672" y="60" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_RiskToManagerReview" bpmnElement="Flow_RiskToManagerReview">
+        <di:waypoint x="440" y="205" /><di:waypoint x="440" y="300" /><di:waypoint x="520" y="300" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_ManagerToDecisionGateway" bpmnElement="Flow_ManagerToDecisionGateway">
+        <di:waypoint x="630" y="300" /><di:waypoint x="675" y="300" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_ManagerApprovedToFork" bpmnElement="Flow_ManagerApprovedToFork">
+        <di:waypoint x="700" y="275" /><di:waypoint x="700" y="220" /><di:waypoint x="580" y="220" /><di:waypoint x="580" y="205" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_ManagerRejectedToEnd" bpmnElement="Flow_ManagerRejectedToEnd">
+        <di:waypoint x="725" y="300" /><di:waypoint x="782" y="300" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_ForkToDiscount" bpmnElement="Flow_ForkToDiscount">
+        <di:waypoint x="580" y="155" /><di:waypoint x="580" y="135" /><di:waypoint x="660" y="135" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_ForkToInventory" bpmnElement="Flow_ForkToInventory">
+        <di:waypoint x="580" y="205" /><di:waypoint x="580" y="225" /><di:waypoint x="660" y="225" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_DiscountToJoin" bpmnElement="Flow_DiscountToJoin">
+        <di:waypoint x="770" y="135" /><di:waypoint x="850" y="135" /><di:waypoint x="850" y="155" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_InventoryToJoin" bpmnElement="Flow_InventoryToJoin">
+        <di:waypoint x="770" y="225" /><di:waypoint x="850" y="225" /><di:waypoint x="850" y="205" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_StockErrorToNotify" bpmnElement="Flow_StockErrorToNotify">
+        <di:waypoint x="720" y="278" /><di:waypoint x="720" y="395" /><di:waypoint x="780" y="395" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_StockToCancelEnd" bpmnElement="Flow_StockToCancelEnd">
+        <di:waypoint x="880" y="395" /><di:waypoint x="932" y="395" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_JoinToPayment" bpmnElement="Flow_JoinToPayment">
+        <di:waypoint x="875" y="180" /><di:waypoint x="920" y="180" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_PaymentToShip" bpmnElement="Flow_PaymentToShip">
+        <di:waypoint x="1020" y="180" /><di:waypoint x="1070" y="180" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_PaymentErrorToNotify" bpmnElement="Flow_PaymentErrorToNotify">
+        <di:waypoint x="980" y="238" /><di:waypoint x="980" y="295" /><di:waypoint x="1040" y="295" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_PaymentErrorToEnd" bpmnElement="Flow_PaymentErrorToEnd">
+        <di:waypoint x="1140" y="295" /><di:waypoint x="1192" y="295" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_ShipToEnd" bpmnElement="Flow_ShipToEnd">
+        <di:waypoint x="1170" y="180" /><di:waypoint x="1222" y="180" />
+      </bpmndi:BPMNEdge>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

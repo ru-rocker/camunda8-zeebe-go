@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" 
+             xmlns:dmndi="https://www.omg.org/spec/DMN/20191111/DMNDI/" 
+             xmlns:dc="http://www.omg.org/spec/DMN/20180521/DC/" 
+             xmlns:modeler="http://camunda.org/schema/modeler/1.0" 
+             id="Definitions_OrderRiskRules" 
+             name="Order Risk Rules" 
+             namespace="http://camunda.org/schema/1.0/dmn" 
+             exporter="Camunda Modeler" 
+             exporterVersion="5.20.0" 
+             modeler:executionPlatform="Camunda Cloud" 
+             modeler:executionPlatformVersion="8.5.0">
+  
+  <decision id="Decision_CalculateRiskAndDiscount" name="Calculate Risk and Discount">
+    <decisionTable id="DecisionTable_RiskAndDiscount" hitPolicy="FIRST">
+      
+      <!-- Inputs -->
+      <input id="Input_CustomerTier" label="Customer Tier">
+        <inputExpression id="InputExpression_CustomerTier" typeRef="string">
+          <text>customerTier</text>
+        </inputExpression>
+        <inputValues id="UnaryTests_CustomerTier">
+          <text>"PLATINUM","GOLD","SILVER","BRONZE","STANDARD"</text>
+        </inputValues>
+      </input>
+
+      <input id="Input_TotalAmount" label="Order Amount ($)">
+        <inputExpression id="InputExpression_TotalAmount" typeRef="number">
+          <text>totalAmount</text>
+        </inputExpression>
+      </input>
+
+      <input id="Input_FraudScore" label="Fraud Risk Score (0-100)">
+        <inputExpression id="InputExpression_FraudScore" typeRef="number">
+          <text>fraudScore</text>
+        </inputExpression>
+      </input>
+
+      <!-- Outputs -->
+      <output id="Output_RiskLevel" label="Risk Level" name="riskLevel" typeRef="string">
+        <outputValues id="UnaryTests_RiskLevel">
+          <text>"LOW","MEDIUM","HIGH","CRITICAL"</text>
+        </outputValues>
+      </output>
+
+      <output id="Output_DiscountPercent" label="Discount (%)" name="discountPercent" typeRef="number" />
+      <output id="Output_RequiresManagerApproval" label="Requires Manager Approval" name="requiresManagerApproval" typeRef="boolean" />
+
+      <!-- Rules (HitPolicy FIRST) -->
+      <!-- 1. Critical Fraud: score >= 80 -->
+      <rule id="DecisionRule_CriticalFraud">
+        <inputEntry id="UnaryTests_Rule1_1"><text>-</text></inputEntry>
+        <inputEntry id="UnaryTests_Rule1_2"><text>-</text></inputEntry>
+        <inputEntry id="UnaryTests_Rule1_3"><text>&gt;= 80</text></inputEntry>
+        <outputEntry id="LiteralExpression_Rule1_1"><text>"CRITICAL"</text></outputEntry>
+        <outputEntry id="LiteralExpression_Rule1_2"><text>0.0</text></outputEntry>
+        <outputEntry id="LiteralExpression_Rule1_3"><text>false</text></outputEntry>
+      </rule>
+
+      <!-- 2. High Value (>=$5000) with moderate risk (>=40) -> HIGH RISK & Manager Approval Required -->
+      <rule id="DecisionRule_HighValueRisk">
+        <inputEntry id="UnaryTests_Rule2_1"><text>-</text></inputEntry>
+        <inputEntry id="UnaryTests_Rule2_2"><text>&gt;= 5000</text></inputEntry>
+        <inputEntry id="UnaryTests_Rule2_3"><text>&gt;= 40</text></inputEntry>
+        <outputEntry id="LiteralExpression_Rule2_1"><text>"HIGH"</text></outputEntry>
+        <outputEntry id="LiteralExpression_Rule2_2"><text>5.0</text></outputEntry>
+        <outputEntry id="LiteralExpression_Rule2_3"><text>true</text></outputEntry>
+      </rule>
+
+      <!-- 3. Platinum Tier VIP Customer -->
+      <rule id="DecisionRule_PlatinumVIP">
+        <inputEntry id="UnaryTests_Rule3_1"><text>"PLATINUM"</text></inputEntry>
+        <inputEntry id="UnaryTests_Rule3_2"><text>-</text></inputEntry>
+        <inputEntry id="UnaryTests_Rule3_3"><text>&lt; 40</text></inputEntry>
+        <outputEntry id="LiteralExpression_Rule3_1"><text>"LOW"</text></outputEntry>
+        <outputEntry id="LiteralExpression_Rule3_2"><text>20.0</text></outputEntry>
+        <outputEntry id="LiteralExpression_Rule3_3"><text>false</text></outputEntry>
+      </rule>
+
+      <!-- 4. Gold Tier Customer -->
+      <rule id="DecisionRule_GoldCustomer">
+        <inputEntry id="UnaryTests_Rule4_1"><text>"GOLD"</text></inputEntry>
+        <inputEntry id="UnaryTests_Rule4_2"><text>-</text></inputEntry>
+        <inputEntry id="UnaryTests_Rule4_3"><text>&lt; 40</text></inputEntry>
+        <outputEntry id="LiteralExpression_Rule4_1"><text>"LOW"</text></outputEntry>
+        <outputEntry id="LiteralExpression_Rule4_2"><text>15.0</text></outputEntry>
+        <outputEntry id="LiteralExpression_Rule4_3"><text>false</text></outputEntry>
+      </rule>
+
+      <!-- 5. Silver Tier Customer -->
+      <rule id="DecisionRule_SilverCustomer">
+        <inputEntry id="UnaryTests_Rule5_1"><text>"SILVER"</text></inputEntry>
+        <inputEntry id="UnaryTests_Rule5_2"><text>-</text></inputEntry>
+        <inputEntry id="UnaryTests_Rule5_3"><text>&lt; 40</text></inputEntry>
+        <outputEntry id="LiteralExpression_Rule5_1"><text>"MEDIUM"</text></outputEntry>
+        <outputEntry id="LiteralExpression_Rule5_2"><text>10.0</text></outputEntry>
+        <outputEntry id="LiteralExpression_Rule5_3"><text>false</text></outputEntry>
+      </rule>
+
+      <!-- 6. Default Fallback -->
+      <rule id="DecisionRule_DefaultFallback">
+        <inputEntry id="UnaryTests_Rule6_1"><text>-</text></inputEntry>
+        <inputEntry id="UnaryTests_Rule6_2"><text>-</text></inputEntry>
+        <inputEntry id="UnaryTests_Rule6_3"><text>-</text></inputEntry>
+        <outputEntry id="LiteralExpression_Rule6_1"><text>"MEDIUM"</text></outputEntry>
+        <outputEntry id="LiteralExpression_Rule6_2"><text>0.0</text></outputEntry>
+        <outputEntry id="LiteralExpression_Rule6_3"><text>false</text></outputEntry>
+      </rule>
+
+    </decisionTable>
+  </decision>
+
+  <dmndi:DMNDI>
+    <dmndi:DMNDiagram id="DMNDiagram_1">
+      <dmndi:DMNShape id="DMNShape_Decision_CalculateRiskAndDiscount" dmnElementRef="Decision_CalculateRiskAndDiscount">
+        <dc:Bounds height="80" width="180" x="160" y="80" />
+      </dmndi:DMNShape>
+    </dmndi:DMNDiagram>
+  </dmndi:DMNDI>
+</definitions>

@@ -1,0 +1,80 @@
+networks:
+  camunda-network:
+    driver: bridge
+
+volumes:
+  zeebe-data:
+  elastic-data:
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elastic-data:/usr/share/elasticsearch/data
+    networks:
+      - camunda-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cat/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  zeebe:
+    image: camunda/zeebe:8.5.6
+    container_name: zeebe-broker
+    environment:
+      - ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_CLASSNAME=io.camunda.zeebe.exporter.ElasticsearchExporter
+      - ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_ARGS_URL=http://elasticsearch:9200
+      - ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_ARGS_BULK_SIZE=1
+      - ZEEBE_BROKER_DATA_DISKUSAGECOMMANDWATERMARK=0.95
+      - ZEEBE_BROKER_DATA_DISKUSAGEREPLICATIONWATERMARK=0.99
+    ports:
+      - "26500:26500"
+      - "9600:9600"
+    volumes:
+      - zeebe-data:/usr/local/zeebe/data
+    networks:
+      - camunda-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  operate:
+    image: camunda/operate:8.5.6
+    container_name: operate
+    ports:
+      - "8081:8080"
+    environment:
+      - CAMUNDA_OPERATE_ZEEBE_GATEWAYADDRESS=zeebe:26500
+      - CAMUNDA_OPERATE_ELASTICSEARCH_URL=http://elasticsearch:9200
+      - CAMUNDA_OPERATE_ZEEBEELASTICSEARCH_URL=http://elasticsearch:9200
+    networks:
+      - camunda-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      zeebe:
+        condition: service_started
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zeebe-go-worker
+    environment:
+      - ZEEBE_ADDRESS=zeebe:26500
+      - ZEEBE_INSECURE_CONNECTION=true
+      - WORKER_CONCURRENCY=4
+      - CIRCUIT_BREAKER_FAILURE_THRESHOLD=3
+      - CIRCUIT_BREAKER_RECOVERY_TIMEOUT=10s
+    networks:
+      - camunda-network
+    depends_on:
+      zeebe:
+        condition: service_started
+    restart: unless-stopped

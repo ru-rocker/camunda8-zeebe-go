@@ -1,0 +1,47 @@
+# Binaries & Build outputs
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go Workspace & Module artifacts
+/vendor/
+/go.work
+/go.work.sum
+
+# Coverage & Profiling
+coverage.txt
+coverage.html
+*.prof
+
+# IDEs & Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# OS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Local Zeebe & Elastic data
+zeebe-data/
+elastic-data/
