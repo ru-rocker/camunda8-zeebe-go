@@ -22,6 +22,8 @@ func main() {
 		listTasks     bool
 		tasklistQuery bool
 		taskState     string
+		varName       string
+		varValue      string
 		approveOrder  bool
 		rejectOrder   bool
 		targetUser    string
@@ -36,6 +38,8 @@ func main() {
 	flag.BoolVar(&listTasks, "list-tasks", false, "List pending User Tasks via Zeebe Broker job polling (prototype)")
 	flag.BoolVar(&tasklistQuery, "tasklist-query", false, "Query User Tasks via Camunda Tasklist Read Model (Production)")
 	flag.StringVar(&taskState, "state", "CREATED", "Task state filter for Tasklist API: CREATED | COMPLETED | CANCELED")
+	flag.StringVar(&varName, "var-name", "", "Filter tasks by variable name (e.g. customerTier, totalAmount)")
+	flag.StringVar(&varValue, "var-value", "", "Filter tasks by variable value (e.g. GOLD, 8000)")
 	flag.BoolVar(&approveOrder, "approve", false, "Simulate human approval on active User Tasks")
 	flag.BoolVar(&rejectOrder, "reject", false, "Simulate human rejection on active User Tasks")
 	flag.StringVar(&targetUser, "user", "", "Filter tasks by Assignee or Candidate Group (e.g. manager_demo, order-reviewers)")
@@ -223,8 +227,8 @@ func main() {
 	}
 
 	if tasklistQuery {
-		log.Printf("[Starter] Querying Tasklist Read Model (%s) for State='%s', User='%s'...",
-			cfg.TasklistURL, taskState, targetUser)
+		log.Printf("[Starter] Querying Tasklist Read Model (%s) for State='%s', User='%s', Var='%s=%s'...",
+			cfg.TasklistURL, taskState, targetUser, varName, varValue)
 
 		tlClient, tlErr := tasklist.NewClient(cfg.TasklistURL, cfg.TasklistUsername, cfg.TasklistPassword)
 		if tlErr != nil {
@@ -238,6 +242,17 @@ func main() {
 		if targetUser != "" {
 			query.Assignee = targetUser
 		}
+		if varName != "" && varValue != "" {
+			// Format as JSON string or number
+			formattedVal := fmt.Sprintf("\"%s\"", varValue)
+			query.TaskVariables = []tasklist.TaskVariableFilter{
+				{
+					Name:     varName,
+					Value:    formattedVal,
+					Operator: tasklist.OpEqual,
+				},
+			}
+		}
 
 		tasks, sErr := tlClient.SearchTasks(ctx, query)
 		if sErr != nil {
@@ -245,7 +260,8 @@ func main() {
 		}
 
 		if len(tasks) == 0 {
-			log.Printf("[Starter] No tasks found matching State='%s', User='%s' in Tasklist.", taskState, targetUser)
+			log.Printf("[Starter] No tasks found matching State='%s', User='%s', Var='%s=%s' in Tasklist.",
+				taskState, targetUser, varName, varValue)
 			return
 		}
 

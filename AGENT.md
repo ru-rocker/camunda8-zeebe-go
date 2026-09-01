@@ -27,7 +27,12 @@ This repository contains a production-grade **Camunda 8 (Zeebe) Go Worker and Wo
 │   └── order-risk-rules.dmn            # DMN 1.3 Decision Table for risk evaluation
 ├── cmd/
 │   ├── worker/main.go                  # Main Zeebe job worker daemon
-│   └── starter/main.go                 # Workflow/DMN deployer & instance initiator
+│   ├── starter/main.go                 # Workflow/DMN deployer & CLI initiator
+│   └── server/main.go                  # Web UI REST backend server
+├── web/
+│   ├── index.html                      # Modern Dashboard HTML
+│   ├── style.css                       # Dark mode glassmorphic CSS
+│   └── app.js                          # Interactive task explorer & initiator logic
 └── internal/
     ├── config/config.go                # Environment variables configuration
     ├── model/order.go                  # Domain types and workflow payloads

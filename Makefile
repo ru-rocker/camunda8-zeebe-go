@@ -11,12 +11,16 @@ build:
 	mkdir -p bin
 	go build -o bin/worker ./cmd/worker
 	go build -o bin/starter ./cmd/starter
+	go build -o bin/server ./cmd/server
 
 clean:
 	rm -rf bin
 
 run-worker:
 	go run ./cmd/worker
+
+run-ui:
+	go run ./cmd/server
 
 deploy-bpmn:
 	go run ./cmd/starter -deploy

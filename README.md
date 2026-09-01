@@ -126,7 +126,18 @@ make docker-up
 * **Camunda Operate Web UI**: [http://localhost:8081](http://localhost:8081) (Credentials: `demo` / `demo`)
 * **Camunda Tasklist Web UI**: [http://localhost:8082](http://localhost:8082) (Credentials: `demo` / `demo`)
 
-### 4. Deploy All BPMN Workflows & DMN Tables
+### 4. Launch the Custom Orchestration & Tasklist Web UI (Port 3000)
+```bash
+make run-ui
+```
+* Open **[http://localhost:3000](http://localhost:3000)** in your browser.
+* **Features Included**:
+  - **One-Click Process Initiator**: Start instances with presets (`Platinum VIP DMN`, `High-Risk Review`, `Critical Fraud`, `Standard Review`) or custom parameters.
+  - **Multi-Variable TaskQuery Filter**: Search by `Assignee`, `Candidate Group`, `Candidate User`, `Task State`, and **Two Dynamic Task Variables** (`customerTier`, `totalAmount`, etc.).
+  - **Direct Human Actions**: One-click **Approve** (green) or **Reject** (red) buttons directly on task cards.
+  - **Live Cluster Health Indicators**: Zeebe, Tasklist, Operate.
+
+### 5. Deploy All BPMN Workflows & DMN Tables
 ```bash
 make deploy-all
 ```

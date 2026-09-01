@@ -22,16 +22,37 @@ const (
 	TaskStateCanceled  TaskState = "CANCELED"
 )
 
+// VariableOperator defines comparison operators for task variable queries
+type VariableOperator string
+
+const (
+	OpEqual              VariableOperator = "eq"
+	OpNotEqual           VariableOperator = "neq"
+	OpGreaterThan        VariableOperator = "gt"
+	OpGreaterThanOrEqual VariableOperator = "gte"
+	OpLessThan           VariableOperator = "lt"
+	OpLessThanOrEqual    VariableOperator = "lte"
+	OpLike               VariableOperator = "like"
+)
+
+// TaskVariableFilter represents variable-based query filter for Tasklist API
+type TaskVariableFilter struct {
+	Name     string           `json:"name"`
+	Value    string           `json:"value"` // JSON string formatted value e.g. "\"GOLD\"" or "5000"
+	Operator VariableOperator `json:"operator,omitempty"`
+}
+
 // TaskSearchQuery defines the search filters for POST /v1/tasks/search
 type TaskSearchQuery struct {
-	State               TaskState `json:"state,omitempty"`
-	Assignee            string    `json:"assignee,omitempty"`
-	CandidateGroup      string    `json:"candidateGroup,omitempty"`
-	CandidateUser       string    `json:"candidateUser,omitempty"`
-	ProcessInstanceKey  string    `json:"processInstanceKey,omitempty"`
-	ProcessDefinitionKey string   `json:"processDefinitionKey,omitempty"`
-	TaskDefinitionID    string    `json:"taskDefinitionId,omitempty"`
-	PageSize            int       `json:"pageSize,omitempty"`
+	State                TaskState            `json:"state,omitempty"`
+	Assignee             string               `json:"assignee,omitempty"`
+	CandidateGroup       string               `json:"candidateGroup,omitempty"`
+	CandidateUser        string               `json:"candidateUser,omitempty"`
+	ProcessInstanceKey   string               `json:"processInstanceKey,omitempty"`
+	ProcessDefinitionKey string               `json:"processDefinitionKey,omitempty"`
+	TaskDefinitionID     string               `json:"taskDefinitionId,omitempty"`
+	TaskVariables        []TaskVariableFilter `json:"taskVariables,omitempty"`
+	PageSize             int                  `json:"pageSize,omitempty"`
 }
 
 // Task represents a User Task object returned from Camunda Tasklist REST API
@@ -106,7 +127,7 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusFound {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("authentication failed with status %d: %s", resp.StatusCode, string(body))
 	}
@@ -172,4 +193,32 @@ func (c *Client) SearchTasks(ctx context.Context, query TaskSearchQuery) ([]Task
 	}
 
 	return tasks, nil
+}
+
+// FetchTaskVariables retrieves all variables for a given task
+func (c *Client) FetchTaskVariables(ctx context.Context, taskID string) ([]Variable, error) {
+	url := fmt.Sprintf("%s/v1/tasks/%s/variables/search", c.baseURL, taskID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBufferString("{}"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create variables search request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("variables search failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("variables API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var vars []Variable
+	if decErr := json.NewDecoder(resp.Body).Decode(&vars); decErr != nil {
+		return nil, fmt.Errorf("failed to decode variables: %w", decErr)
+	}
+
+	return vars, nil
 }

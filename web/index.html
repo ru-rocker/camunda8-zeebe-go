@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Camunda 8 Zeebe - Tasklist & Workflow Hub</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="logo-badge">C8</div>
+      <div>
+        <h1>Zeebe Orchestration & Tasklist Hub</h1>
+        <span>Golang Resilient Microservices Engine</span>
+      </div>
+    </div>
+
+    <div class="header-status">
+      <div class="status-pill" id="status-zeebe">
+        <span class="dot"></span> Zeebe:26500
+      </div>
+      <div class="status-pill" id="status-tasklist">
+        <span class="dot"></span> Tasklist:8082
+      </div>
+      <a href="http://localhost:8081" target="_blank" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;">
+        Operate Console ↗
+      </a>
+      <a href="http://localhost:8082" target="_blank" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;">
+        Tasklist UI ↗
+      </a>
+      <button class="btn btn-primary" id="btn-deploy" style="padding: 0.4rem 0.9rem; font-size: 0.78rem;">
+        Deploy Models (BPMN/DMN)
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="app-container">
+
+    <!-- Left: Process Initiator -->
+    <section class="card">
+      <div class="card-title">
+        <span>Initiate Process Instance</span>
+        <span class="badge badge-blue">Start Event</span>
+      </div>
+
+      <!-- Presets -->
+      <label>Quick Scenarios &amp; DMN Presets</label>
+      <div class="preset-grid">
+        <div class="btn-preset" onclick="setPreset('risk-platinum')">
+          <span class="preset-name">💎 Platinum VIP</span>
+          <span class="preset-desc">DMN 20% Discount + Low Risk</span>
+        </div>
+        <div class="btn-preset" onclick="setPreset('risk-high')">
+          <span class="preset-name">⚠️ High-Risk Review</span>
+          <span class="preset-desc">DMN -> Manager Review Task</span>
+        </div>
+        <div class="btn-preset" onclick="setPreset('risk-fraud')">
+          <span class="preset-name">🛑 Critical Fraud</span>
+          <span class="preset-desc">Fraud 95 -> DMN Auto-Reject</span>
+        </div>
+        <div class="btn-preset" onclick="setPreset('review')">
+          <span class="preset-name">👤 Order Review</span>
+          <span class="preset-desc">$2,500 Order Review Task</span>
+        </div>
+      </div>
+
+      <!-- Custom Form -->
+      <form id="form-start-process">
+        <div class="form-group">
+          <label for="input-process-id">Target Process ID</label>
+          <select id="input-process-id" required>
+            <option value="order-risk-fulfillment-process">order-risk-fulfillment-process (Complex with DMN &amp; Parallel Fork)</option>
+            <option value="order-fulfillment-process">order-fulfillment-process (Standard Workflow)</option>
+          </select>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="input-customer-id">Customer ID</label>
+            <input type="text" id="input-customer-id" value="cust_gold_alice" required />
+          </div>
+          <div class="form-group">
+            <label for="input-tier">Customer Tier</label>
+            <select id="input-tier">
+              <option value="PLATINUM">PLATINUM (VIP 20%)</option>
+              <option value="GOLD" selected>GOLD (15%)</option>
+              <option value="SILVER">SILVER (10%)</option>
+              <option value="STANDARD">STANDARD (0%)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="input-amount">Total Amount ($)</label>
+            <input type="number" id="input-amount" value="8000" step="0.01" required />
+          </div>
+          <div class="form-group">
+            <label for="input-fraud-score">Fraud Risk Score (0-100)</label>
+            <input type="number" id="input-fraud-score" value="55" min="0" max="100" required />
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block" id="btn-submit-process" style="margin-top: 0.5rem;">
+          Launch Workflow Instance
+        </button>
+      </form>
+    </section>
+
+    <!-- Right: Tasklist Query & Action Panel -->
+    <section class="card">
+      <div class="card-title">
+        <span>Tasklist Explorer &amp; Human Task Queue</span>
+        <button class="btn btn-secondary" onclick="fetchTasks()" style="padding: 0.3rem 0.75rem; font-size: 0.75rem;">
+          ↻ Refresh Tasks
+        </button>
+      </div>
+
+      <!-- Search & TaskQuery Filter Panel -->
+      <div class="filter-panel">
+        <form id="form-task-query">
+          <div class="filter-grid">
+            <div class="form-group" style="margin-bottom: 0;">
+              <label>Assignee</label>
+              <input type="text" id="filter-assignee" placeholder="e.g. manager_demo" />
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label>Candidate Group</label>
+              <input type="text" id="filter-candidate-group" placeholder="e.g. risk-managers" />
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label>Candidate User</label>
+              <input type="text" id="filter-candidate-user" placeholder="e.g. demo" />
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label>Task State</label>
+              <select id="filter-state">
+                <option value="CREATED" selected>CREATED (Pending)</option>
+                <option value="COMPLETED">COMPLETED</option>
+                <option value="CANCELED">CANCELED</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Variable Filters (Two Variables) -->
+          <div class="form-row" style="margin-top: 0.75rem;">
+            <div>
+              <label>Task Variable 1 (Search Filter)</label>
+              <div class="variable-filter-row">
+                <input type="text" id="var1-name" placeholder="Name (e.g. customerTier)" />
+                <select id="var1-op">
+                  <option value="eq">= (Equal)</option>
+                  <option value="neq">!= (Not Equal)</option>
+                  <option value="gte">&gt;= (GTE)</option>
+                  <option value="lte">&lt;= (LTE)</option>
+                </select>
+                <input type="text" id="var1-value" placeholder="Value (e.g. GOLD)" />
+              </div>
+            </div>
+
+            <div>
+              <label>Task Variable 2 (Search Filter)</label>
+              <div class="variable-filter-row">
+                <input type="text" id="var2-name" placeholder="Name (e.g. totalAmount)" />
+                <select id="var2-op">
+                  <option value="gte">&gt;= (GTE)</option>
+                  <option value="eq">= (Equal)</option>
+                  <option value="lte">&lt;= (LTE)</option>
+                </select>
+                <input type="text" id="var2-value" placeholder="Value (e.g. 5000)" />
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem;">
+            <button type="button" class="btn btn-secondary" onclick="clearFilters()" style="padding: 0.4rem 0.9rem; font-size: 0.8rem;">
+              Clear Filters
+            </button>
+            <button type="submit" class="btn btn-primary" style="padding: 0.4rem 1.2rem; font-size: 0.8rem;">
+              Execute TaskQuery
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Task Results List -->
+      <div id="tasks-container" class="task-list">
+        <div class="empty-state">
+          <p>Click "Execute TaskQuery" or refresh to load active tasks from Tasklist Read Model.</p>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Toast Notifications Container -->
+  <div id="toast-container"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

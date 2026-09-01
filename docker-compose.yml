@@ -54,7 +54,7 @@ services:
         condition: service_started
 
   tasklist:
-    image: camunda/tasklist:8.5.6
+    image: camunda/tasklist:8.5.0
     container_name: tasklist
     ports:
       - "8082:8080"

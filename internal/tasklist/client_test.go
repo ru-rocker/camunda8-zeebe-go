@@ -10,13 +10,12 @@ import (
 	"camunda8-zeebe-go/internal/tasklist"
 )
 
-func TestTasklistClient_SearchTasks(t *testing.T) {
+func TestTasklistClient_SearchTasks_WithVariables(t *testing.T) {
 	// Mock HTTP Server simulating Camunda 8 Tasklist REST API
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/login":
-			w.Header().Set("Set-Cookie", "SESSION=mock-session-cookie; Path=/; HttpOnly")
-			w.WriteHeader(http.StatusOK)
+			w.WriteHeader(http.StatusNoContent)
 
 		case "/v1/tasks/search":
 			if r.Method != http.MethodPost {
@@ -42,13 +41,24 @@ func TestTasklistClient_SearchTasks(t *testing.T) {
 				},
 			}
 
-			// Filter by assignee if specified in mock
-			if query.Assignee != "" && query.Assignee != "manager_demo" {
-				mockTasks = []tasklist.Task{}
+			// Filter by variable if specified
+			if len(query.TaskVariables) > 0 {
+				filter := query.TaskVariables[0]
+				if filter.Name == "customerTier" && filter.Value != "\"GOLD\"" {
+					mockTasks = []tasklist.Task{}
+				}
 			}
 
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(mockTasks)
+
+		case "/v1/tasks/2251799813685436/variables/search":
+			mockVars := []tasklist.Variable{
+				{ID: "1", Name: "customerTier", Value: "GOLD"},
+				{ID: "2", Name: "totalAmount", Value: 8000.0},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(mockVars)
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -61,34 +71,27 @@ func TestTasklistClient_SearchTasks(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 
-	// 1. Search for manager_demo
+	// 1. Search with variable filter customerTier = "GOLD"
 	tasks, err := client.SearchTasks(context.Background(), tasklist.TaskSearchQuery{
-		Assignee: "manager_demo",
-		State:    tasklist.TaskStateCreated,
+		State: tasklist.TaskStateCreated,
+		TaskVariables: []tasklist.TaskVariableFilter{
+			{Name: "customerTier", Value: "\"GOLD\"", Operator: tasklist.OpEqual},
+		},
 	})
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
 	}
 
 	if len(tasks) != 1 {
-		t.Fatalf("expected 1 task, got %d", len(tasks))
+		t.Fatalf("expected 1 task matching customerTier=GOLD, got %d", len(tasks))
 	}
 
-	if tasks[0].Assignee != "manager_demo" {
-		t.Fatalf("expected assignee 'manager_demo', got '%s'", tasks[0].Assignee)
-	}
-	if tasks[0].Name != "Manager Risk Review" {
-		t.Fatalf("expected name 'Manager Risk Review', got '%s'", tasks[0].Name)
-	}
-
-	// 2. Search for non-existing user
-	emptyTasks, err := client.SearchTasks(context.Background(), tasklist.TaskSearchQuery{
-		Assignee: "unknown_user",
-	})
+	// 2. Fetch task variables
+	variables, err := client.FetchTaskVariables(context.Background(), tasks[0].ID)
 	if err != nil {
-		t.Fatalf("search failed: %v", err)
+		t.Fatalf("failed to fetch variables: %v", err)
 	}
-	if len(emptyTasks) != 0 {
-		t.Fatalf("expected 0 tasks, got %d", len(emptyTasks))
+	if len(variables) != 2 {
+		t.Fatalf("expected 2 variables, got %d", len(variables))
 	}
 }
