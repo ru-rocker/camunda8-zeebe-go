@@ -147,11 +147,12 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 }
 
 type StartProcessRequest struct {
-	ProcessID    string  `json:"processId"`
-	CustomerID   string  `json:"customerId"`
-	CustomerTier string  `json:"customerTier"`
-	TotalAmount  float64 `json:"totalAmount"`
-	FraudScore   float64 `json:"fraudScore"`
+	ProcessID       string                 `json:"processId"`
+	CustomerID      string                 `json:"customerId"`
+	CustomerTier    string                 `json:"customerTier"`
+	TotalAmount     float64                `json:"totalAmount"`
+	FraudScore      float64                `json:"fraudScore"`
+	CustomVariables map[string]interface{} `json:"customVariables,omitempty"`
 }
 
 // POST /api/instances
@@ -192,18 +193,30 @@ func (s *Server) handleStartInstance(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt: time.Now().UTC(),
 	}
 
+	// Prepare variables map
+	instanceVars := map[string]interface{}{
+		"order":        payload,
+		"orderId":      orderID,
+		"customerId":   req.CustomerID,
+		"customerTier": req.CustomerTier,
+		"totalAmount":  req.TotalAmount,
+		"fraudScore":   req.FraudScore,
+	}
+
+	// Merge any user-supplied custom variables
+	for k, v := range req.CustomVariables {
+		if k != "" {
+			instanceVars[k] = v
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	cmd, err := s.zeebeClient.NewCreateInstanceCommand().
 		BPMNProcessId(req.ProcessID).
 		LatestVersion().
-		VariablesFromObject(map[string]interface{}{
-			"order":        payload,
-			"customerTier": req.CustomerTier,
-			"totalAmount":  req.TotalAmount,
-			"fraudScore":   req.FraudScore,
-		})
+		VariablesFromObject(instanceVars)
 
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -246,6 +259,13 @@ func (s *Server) handleTaskSearch(w http.ResponseWriter, r *http.Request) {
 	if s.tasklistClient != nil {
 		tasks, err := s.tasklistClient.SearchTasks(ctx, query)
 		if err == nil {
+			// Populate task variables for each task
+			for i := range tasks {
+				if len(tasks[i].Variables) == 0 {
+					vars, _ := s.tasklistClient.FetchTaskVariables(ctx, tasks[i].ID)
+					tasks[i].Variables = vars
+				}
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(tasks)
 			return
@@ -270,6 +290,8 @@ func (s *Server) handleTaskSearch(w http.ResponseWriter, r *http.Request) {
 	var fallbackTasks []tasklist.Task
 	for _, j := range jobsResp {
 		headers, _ := j.GetCustomHeadersAsMap()
+		varsMap, _ := j.GetVariablesAsMap()
+
 		assignee := headers["io.camunda.zeebe:assignee"]
 		candidateGroup := headers["io.camunda.zeebe:candidateGroups"]
 
@@ -278,11 +300,79 @@ func (s *Server) handleTaskSearch(w http.ResponseWriter, r *http.Request) {
 			candGroups = append(candGroups, candidateGroup)
 		}
 
-		if query.Assignee != "" && assignee != query.Assignee {
+		if query.TaskDefinitionID != "" && !strings.EqualFold(j.GetElementId(), query.TaskDefinitionID) {
 			continue
 		}
-		if query.CandidateGroup != "" && !strings.Contains(candidateGroup, query.CandidateGroup) {
+		if query.Assignee != "" && !strings.EqualFold(assignee, query.Assignee) {
 			continue
+		}
+		if query.CandidateGroup != "" && !strings.Contains(strings.ToLower(candidateGroup), strings.ToLower(query.CandidateGroup)) {
+			continue
+		}
+
+		// Check Task Variables filter (Case-Insensitive string matching)
+		matchedVars := true
+		for _, filter := range query.TaskVariables {
+			// Find variable key with case-insensitive check
+			var val interface{}
+			found := false
+			for k, v := range varsMap {
+				if strings.EqualFold(k, filter.Name) {
+					val = v
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				matchedVars = false
+				break
+			}
+
+			valStr := fmt.Sprintf("%v", val)
+			cleanFilterVal := strings.Trim(filter.Value, "\"")
+
+			switch filter.Operator {
+			case tasklist.OpEqual, "":
+				if !strings.EqualFold(valStr, cleanFilterVal) {
+					matchedVars = false
+				}
+			case tasklist.OpLike:
+				if !strings.Contains(strings.ToLower(valStr), strings.ToLower(cleanFilterVal)) {
+					matchedVars = false
+				}
+			case tasklist.OpNotEqual:
+				if strings.EqualFold(valStr, cleanFilterVal) {
+					matchedVars = false
+				}
+			case tasklist.OpGreaterThanOrEqual:
+				vNum, _ := strconv.ParseFloat(valStr, 64)
+				fNum, _ := strconv.ParseFloat(cleanFilterVal, 64)
+				if vNum < fNum {
+					matchedVars = false
+				}
+			case tasklist.OpLessThanOrEqual:
+				vNum, _ := strconv.ParseFloat(valStr, 64)
+				fNum, _ := strconv.ParseFloat(cleanFilterVal, 64)
+				if vNum > fNum {
+					matchedVars = false
+				}
+			}
+		}
+
+		if !matchedVars {
+			continue
+		}
+
+		// Convert variables to Tasklist Variable objects
+		var taskVars []tasklist.Variable
+		for k, v := range varsMap {
+			if k != "order" { // avoid huge order object in summary tag
+				taskVars = append(taskVars, tasklist.Variable{
+					Name:  k,
+					Value: v,
+				})
+			}
 		}
 
 		fallbackTasks = append(fallbackTasks, tasklist.Task{
@@ -292,6 +382,7 @@ func (s *Server) handleTaskSearch(w http.ResponseWriter, r *http.Request) {
 			CandidateGroups:    candGroups,
 			TaskState:          tasklist.TaskStateCreated,
 			ProcessInstanceKey: strconv.FormatInt(j.GetProcessInstanceKey(), 10),
+			Variables:          taskVars,
 			CreationDate:       time.Now().UTC().Format(time.RFC3339),
 		})
 	}
@@ -304,21 +395,47 @@ type CompleteTaskRequest struct {
 	Approved bool `json:"approved"`
 }
 
-// POST /api/tasks/:id/complete
+// GET /api/tasks/:id or POST /api/tasks/:id/complete
 func (s *Server) handleTaskAction(w http.ResponseWriter, r *http.Request) {
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 3 {
+		http.Error(w, "Invalid task endpoint", http.StatusBadRequest)
+		return
+	}
+
+	taskID := pathParts[2]
+
+	// Handle GET /api/tasks/{id} (Fetch specific task)
+	if r.Method == http.MethodGet {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		if s.tasklistClient != nil {
+			task, err := s.tasklistClient.GetTask(ctx, taskID)
+			if err == nil {
+				vars, _ := s.tasklistClient.FetchTaskVariables(ctx, taskID)
+				task.Variables = vars
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(task)
+				return
+			}
+		}
+
+		http.Error(w, "Task not found", http.StatusNotFound)
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(pathParts) < 4 || pathParts[3] != "complete" {
 		http.Error(w, "Invalid task action endpoint", http.StatusBadRequest)
 		return
 	}
 
-	taskIDStr := pathParts[2]
-	taskKey, err := strconv.ParseInt(taskIDStr, 10, 64)
+	taskKey, err := strconv.ParseInt(taskID, 10, 64)
 	if err != nil {
 		http.Error(w, "Invalid task ID", http.StatusBadRequest)
 		return
@@ -330,33 +447,50 @@ func (s *Server) handleTaskAction(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	cmd, err := s.zeebeClient.NewCompleteJobCommand().
-		JobKey(taskKey).
-		VariablesFromMap(map[string]interface{}{
-			"orderApproved":   req.Approved,
-			"managerApproved": req.Approved,
-			"reviewedBy":      "web_operator_admin",
-		})
+	// 1. Try completing via Tasklist REST API
+	completed := false
+	if s.tasklistClient != nil {
+		completeVars := []tasklist.Variable{
+			{Name: "orderApproved", Value: req.Approved},
+			{Name: "managerApproved", Value: req.Approved},
+			{Name: "reviewedBy", Value: "web_operator_admin"},
+		}
 
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
+		// First assign if needed, then complete
+		_ = s.tasklistClient.AssignTask(ctx, taskID, "manager_demo")
+		if err := s.tasklistClient.CompleteTask(ctx, taskID, completeVars); err == nil {
+			completed = true
+		}
 	}
 
-	_, sendErr := cmd.Send(ctx)
-	if sendErr != nil {
+	// 2. Fallback: complete via Zeebe Job Command if Tasklist complete did not execute
+	if !completed {
+		cmd, err := s.zeebeClient.NewCompleteJobCommand().
+			JobKey(taskKey).
+			VariablesFromMap(map[string]interface{}{
+				"orderApproved":   req.Approved,
+				"managerApproved": req.Approved,
+				"reviewedBy":      "web_operator_admin",
+			})
+
+		if err == nil {
+			if _, sendErr := cmd.Send(ctx); sendErr == nil {
+				completed = true
+			}
+		}
+	}
+
+	if !completed {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": sendErr.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Failed to complete task via Tasklist and Zeebe engine"})
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
-		"taskId":   taskKey,
+		"taskId":   taskID,
 		"approved": req.Approved,
 	})
 }

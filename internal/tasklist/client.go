@@ -222,3 +222,94 @@ func (c *Client) FetchTaskVariables(ctx context.Context, taskID string) ([]Varia
 
 	return vars, nil
 }
+
+// GetTask retrieves a specific task by its unique ID (GET /v1/tasks/{taskId})
+func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
+	url := fmt.Sprintf("%s/v1/tasks/%s", c.baseURL, taskID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build get task request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get task request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("get task returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var task Task
+	if decErr := json.NewDecoder(resp.Body).Decode(&task); decErr != nil {
+		return nil, fmt.Errorf("failed to decode task: %w", decErr)
+	}
+
+	return &task, nil
+}
+
+// CompleteTask completes a human user task in Tasklist (PATCH /v1/tasks/{taskId}/complete)
+func (c *Client) CompleteTask(ctx context.Context, taskID string, variables []Variable) error {
+	url := fmt.Sprintf("%s/v1/tasks/%s/complete", c.baseURL, taskID)
+
+	payload := map[string]interface{}{
+		"variables": variables,
+	}
+	bodyData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to serialize complete payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewBuffer(bodyData))
+	if err != nil {
+		return fmt.Errorf("failed to build complete task request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("complete task request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("complete task returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// AssignTask assigns a task to an assignee in Tasklist (PATCH /v1/tasks/{taskId}/assign)
+func (c *Client) AssignTask(ctx context.Context, taskID, assignee string) error {
+	url := fmt.Sprintf("%s/v1/tasks/%s/assign", c.baseURL, taskID)
+
+	payload := map[string]interface{}{
+		"assignee": assignee,
+	}
+	bodyData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to serialize assign payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewBuffer(bodyData))
+	if err != nil {
+		return fmt.Errorf("failed to build assign task request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("assign task request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("assign task returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
