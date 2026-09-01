@@ -22,24 +22,28 @@ This repository contains a production-grade **Camunda 8 (Zeebe) Go Worker and Wo
 ├── docker-compose.yml             # Local environment (Zeebe + Operate + Elasticsearch + Worker)
 ├── Makefile                       # Project development tasks
 ├── bpmn/
-│   └── order-fulfillment.bpmn     # BPMN 2.0 workflow model
+│   ├── order-fulfillment.bpmn          # Standard BPMN 2.0 workflow model
+│   ├── order-risk-fulfillment.bpmn     # Complex BPMN 2.0 with DMN & parallel fork/join
+│   └── order-risk-rules.dmn            # DMN 1.3 Decision Table for risk evaluation
 ├── cmd/
-│   ├── worker/main.go             # Main Zeebe job worker daemon
-│   └── starter/main.go            # BPMN deployer & process instance initiator
+│   ├── worker/main.go                  # Main Zeebe job worker daemon
+│   └── starter/main.go                 # Workflow/DMN deployer & instance initiator
 └── internal/
-    ├── config/config.go           # Environment variables configuration
-    ├── model/order.go             # Domain types and workflow payloads
+    ├── config/config.go                # Environment variables configuration
+    ├── model/order.go                  # Domain types and workflow payloads
     ├── resilience/
-    │   ├── backoff.go             # Exponential backoff with full jitter
-    │   ├── circuitbreaker.go      # Resilient circuit breaker state machine
-    │   ├── errors.go              # Business (BPMN) vs Retriable error types
-    │   └── middleware.go          # Resilient decorator for Zeebe worker handlers
+    │   ├── backoff.go                  # Exponential backoff with full jitter
+    │   ├── circuitbreaker.go           # Resilient circuit breaker state machine
+    │   ├── errors.go                   # Business (BPMN) vs Retriable error types
+    │   └── middleware.go               # Resilient decorator for Zeebe worker handlers
     └── worker/
-        ├── handler.go             # Worker registration & lifecycle manager
-        ├── validate_order.go      # Task handler: 'validate-order'
-        ├── process_payment.go     # Task handler: 'process-payment' (CB protected)
-        ├── ship_order.go          # Task handler: 'ship-order'
-        └── notify_failure.go      # Task handler: 'notify-customer-failure'
+        ├── handler.go                  # Worker registration & lifecycle manager
+        ├── validate_order.go           # Task handler: 'validate-order'
+        ├── process_payment.go          # Task handler: 'process-payment' (CB protected)
+        ├── ship_order.go               # Task handler: 'ship-order'
+        ├── notify_failure.go           # Task handler: 'notify-customer-failure'
+        ├── apply_discount.go           # Task handler: 'apply-discount' (DMN output consumer)
+        └── reserve_inventory.go        # Task handler: 'reserve-inventory' (inventory stock checks)
 ```
 
 ---
