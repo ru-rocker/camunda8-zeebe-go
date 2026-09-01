@@ -124,10 +124,34 @@ make build
 make docker-up
 ```
 * **Camunda Operate Web UI**: [http://localhost:8081](http://localhost:8081) (Credentials: `demo` / `demo`)
+* **Camunda Tasklist Web UI**: [http://localhost:8082](http://localhost:8082) (Credentials: `demo` / `demo`)
 
 ### 4. Deploy All BPMN Workflows & DMN Tables
 ```bash
 make deploy-all
+```
+
+---
+
+## Querying User Tasks (Production Tasklist API vs Broker Polling)
+
+### A. Production Read Model Search (Zero Broker Locks)
+Queries the Camunda Tasklist REST API (`POST /v1/tasks/search`) backed by Elasticsearch index:
+```bash
+# Query all pending CREATED tasks
+make tasklist-query
+# or: go run ./cmd/starter -tasklist-query
+
+# Query tasks assigned to a specific user (e.g. manager_demo)
+make tasklist-query-manager
+# or: go run ./cmd/starter -tasklist-query -user manager_demo -state CREATED
+```
+
+### B. Broker Polling (Zeebe Job Worker Prototype)
+```bash
+# Polls active userTask jobs from Zeebe engine queue
+make list-tasks
+# or: go run ./cmd/starter -list-tasks -user manager_demo
 ```
 
 ---

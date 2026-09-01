@@ -23,6 +23,9 @@ type Config struct {
 	BackoffInitialInterval time.Duration
 	BackoffMaxInterval     time.Duration
 	BackoffMaxRetries      int
+	TasklistURL            string
+	TasklistUsername       string
+	TasklistPassword       string
 }
 
 // LoadConfig reads configuration from environment variables with fallback defaults
@@ -43,6 +46,9 @@ func LoadConfig() *Config {
 		BackoffInitialInterval: getEnvAsDuration("BACKOFF_INITIAL_INTERVAL", 500*time.Millisecond),
 		BackoffMaxInterval:     getEnvAsDuration("BACKOFF_MAX_INTERVAL", 30*time.Second),
 		BackoffMaxRetries:      getEnvAsInt("BACKOFF_MAX_RETRIES", 3),
+		TasklistURL:            getEnv("TASKLIST_URL", "http://localhost:8082"),
+		TasklistUsername:       getEnv("TASKLIST_USERNAME", "demo"),
+		TasklistPassword:       getEnv("TASKLIST_PASSWORD", "demo"),
 	}
 }
 

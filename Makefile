@@ -30,6 +30,18 @@ start-instance:
 start-review:
 	go run ./cmd/starter -start -scenario review
 
+list-tasks:
+	go run ./cmd/starter -list-tasks
+
+list-tasks-manager:
+	go run ./cmd/starter -list-tasks -user manager_demo
+
+tasklist-query:
+	go run ./cmd/starter -tasklist-query
+
+tasklist-query-manager:
+	go run ./cmd/starter -tasklist-query -user manager_demo
+
 approve-review:
 	go run ./cmd/starter -approve
 
@@ -55,4 +67,4 @@ docker-up:
 	docker compose up --build -d
 
 docker-down:
-	docker compose down
+	docker compose down -v --remove-orphans
